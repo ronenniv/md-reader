@@ -36,36 +36,32 @@ public struct ContentView: View {
             StatusBarView(line: cursorLine, column: cursorColumn, wordCount: wordCount)
         }
         .toolbar {
-            // One ToolbarItem per control, with .help on both the label and
-            // the button — SwiftUI toolbar tooltips are unreliable otherwise.
+            // nativeTooltip attaches real AppKit tooltips; SwiftUI's .help()
+            // does not reliably show them for toolbar items.
             ToolbarItem {
                 Button(action: openAction) {
                     Label("Open", systemImage: "folder")
-                        .help("Open a markdown file (⌘O)")
+                        .nativeTooltip("Open a markdown file (⌘O)")
                 }
-                .help("Open a markdown file (⌘O)")
             }
             ToolbarItem {
                 Button(action: saveAction) {
                     Label("Save", systemImage: "square.and.arrow.down")
-                        .help("Save changes (⌘S)")
+                        .nativeTooltip("Save changes (⌘S)")
                 }
                 .disabled(!isDirty)
-                .help("Save changes (⌘S)")
             }
             ToolbarItem {
                 Button(action: saveAsAction) {
                     Label("Save As", systemImage: "square.and.arrow.down.on.square")
-                        .help("Save a copy under a new name (⇧⌘S)")
+                        .nativeTooltip("Save a copy under a new name (⇧⌘S)")
                 }
-                .help("Save a copy under a new name (⇧⌘S)")
             }
             ToolbarItem {
                 Button(action: exportPDF) {
                     Label("Export PDF", systemImage: "square.and.arrow.up")
-                        .help("Export the rendered document as PDF")
+                        .nativeTooltip("Export the rendered document as PDF")
                 }
-                .help("Export the rendered document as PDF")
             }
             ToolbarItem {
                 Picker("View Mode", selection: $viewMode) {
@@ -76,7 +72,7 @@ public struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .help("View mode — Source ⌘1, Reader ⌘2, Split ⌘3")
+                .nativeTooltip("View mode — Source ⌘1, Reader ⌘2, Split ⌘3")
             }
         }
         .focusedSceneValue(\.viewMode, $viewMode)
