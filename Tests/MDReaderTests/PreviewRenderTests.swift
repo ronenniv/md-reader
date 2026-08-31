@@ -157,6 +157,13 @@ final class PreviewRenderTests {
             "absolute image src preserved")
     }
 
+    @Test func pdfExportProducesRealPDF() async throws {
+        let data = try await model.pdfData(
+            for: "# PDF Export\n\nSome **bold** text and `code`.\n\n- a list item\n")
+        #expect(data.count > 1000, "PDF should have real content")
+        #expect(String(decoding: data.prefix(5), as: UTF8.self) == "%PDF-", "must be a PDF file")
+    }
+
     @Test func scrollToLineIsCallable() async throws {
         try await render(String(repeating: "line\n\n", count: 200))
         #expect(await poll("typeof window.scrollToLine === 'function'"), "scrollToLine exists")

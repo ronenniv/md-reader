@@ -70,7 +70,7 @@ public final class PreviewModel: NSObject, ObservableObject {
     public let webView: WKWebView
 
     private let directoryBox = LocalFileSchemeHandler.DirectoryBox()
-    private var isReady = false
+    public private(set) var isReady = false
     private var pendingText: String?
     private var lastQueuedText: String?
     private var renderTask: Task<Void, Never>?
@@ -169,6 +169,72 @@ public final class PreviewModel: NSObject, ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed])
         else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    public enum ExportError: LocalizedError {
+        case previewNotReady
+        case emptyRender
+
+        public var errorDescription: String? {
+            switch self {
+            case .previewNotReady: return "The preview did not finish loading."
+            case .emptyRender: return "The document rendered to an empty page."
+            }
+        }
+    }
+
+    private func evaluateDouble(_ expression: String) async -> Double {
+        await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript(expression) { result, _ in
+                switch result {
+                case let value as Double: continuation.resume(returning: value)
+                case let value as Int: continuation.resume(returning: Double(value))
+                default: continuation.resume(returning: 0)
+                }
+            }
+        }
+    }
+
+    /// Renders `text` and captures the full page as PDF data. Works even if
+    /// the preview pane is not currently shown (the web view renders
+    /// off-screen in its own process).
+    public func pdfData(for text: String) async throws -> Data {
+        var deadline = Date().addingTimeInterval(10)
+        while !isReady && Date() < deadline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard isReady else { throw ExportError.previewNotReady }
+
+        // Give the page a sensible width when the pane isn't mounted.
+        if webView.bounds.width < 100 {
+            webView.frame = NSRect(x: 0, y: 0, width: 800, height: 1000)
+        }
+        renderImmediately(text)
+
+        // Wait for layout to settle (mermaid, KaTeX, images): two consecutive
+        // identical height readings.
+        var lastHeight = -1.0
+        var stableReadings = 0
+        deadline = Date().addingTimeInterval(5)
+        while Date() < deadline && stableReadings < 2 {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let height = await evaluateDouble("document.documentElement.scrollHeight")
+            if height > 0 && height == lastHeight {
+                stableReadings += 1
+            } else {
+                stableReadings = 0
+                lastHeight = height
+            }
+        }
+        guard lastHeight > 0 else { throw ExportError.emptyRender }
+
+        let configuration = WKPDFConfiguration()
+        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: lastHeight)
+        return try await withCheckedThrowingContinuation { continuation in
+            webView.createPDF(configuration: configuration) { result in
+                continuation.resume(with: result)
+            }
+        }
     }
 }
 

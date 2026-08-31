@@ -36,7 +36,28 @@ public struct ContentView: View {
             StatusBarView(line: cursorLine, column: cursorColumn, wordCount: wordCount)
         }
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup {
+                Button(action: openAction) {
+                    Label("Open", systemImage: "folder")
+                }
+                .help("Open (⌘O)")
+
+                Button(action: saveAction) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .disabled(!isDirty)
+                .help("Save (⌘S)")
+
+                Button(action: saveAsAction) {
+                    Label("Save As", systemImage: "square.and.arrow.down.on.square")
+                }
+                .help("Save As (⇧⌘S)")
+
+                Button(action: exportPDF) {
+                    Label("Export PDF", systemImage: "square.and.arrow.up")
+                }
+                .help("Export as PDF")
+
                 Picker("View Mode", selection: $viewMode) {
                     ForEach([ViewMode.source, .split, .reader]) { mode in
                         Image(systemName: mode.symbolName)
@@ -173,6 +194,78 @@ public struct ContentView: View {
             lastKnownDiskText = text
         }
         pendingDiskText = nil
+    }
+
+    /// Unsaved changes exist (untitled documents always count as unsaved).
+    private var isDirty: Bool {
+        guard fileURL != nil else { return true }
+        return document.text != (lastKnownDiskText ?? document.text)
+    }
+
+    // Open/Save/Save As go through the responder chain, which DocumentGroup
+    // bridges to the standard document machinery (same as ⌘O/⌘S/⇧⌘S). Each
+    // has a manual fallback in case a future macOS stops bridging them.
+    private func openAction() {
+        if NSApp.sendAction(NSSelectorFromString("openDocument:"), to: nil, from: nil) { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [MarkdownDocument.markdownType, .plainText]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        Task {
+            for url in panel.urls {
+                try? await openDocument(at: url)
+            }
+        }
+    }
+
+    private func saveAction() {
+        if NSApp.sendAction(NSSelectorFromString("saveDocument:"), to: nil, from: nil) { return }
+        if let url = fileURL {
+            try? document.data().write(to: url)
+        } else {
+            saveAsAction()
+        }
+    }
+
+    private func saveAsAction() {
+        if NSApp.sendAction(NSSelectorFromString("saveDocumentAs:"), to: nil, from: nil) { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [MarkdownDocument.markdownType]
+        panel.nameFieldStringValue = fileURL?.lastPathComponent ?? "Untitled.md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? document.data().write(to: url)
+        Task { try? await openDocument(at: url) }
+    }
+
+    private func exportPDF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue =
+            (fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled") + ".pdf"
+        let handle: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            let text = document.text
+            Task { await performPDFExport(of: text, to: url) }
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(panel.runModal())
+        }
+    }
+
+    @MainActor
+    private func performPDFExport(of text: String, to url: URL) async {
+        do {
+            let data = try await previewModel.pdfData(for: text)
+            try data.write(to: url)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "PDF export failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
     }
 
     private func handleDrop(_ urls: [URL]) -> Bool {
