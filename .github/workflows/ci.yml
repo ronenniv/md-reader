@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Test
+        run: make test
+
+      - name: Assemble app bundle
+        run: make app
+
+      - name: Verify code signature
+        run: codesign --verify --verbose dist/MDReader.app
+
+      - name: Zip app
+        run: ditto -c -k --keepParent dist/MDReader.app MDReader.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MDReader.app
+          path: MDReader.zip

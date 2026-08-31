@@ -1,0 +1,8 @@
+markdown-it 15.0.1
+markdown-it-task-lists 2.1.1
+@vscode/markdown-it-katex 1.1.2 (wrapped CJS->browser global markdownItKatex)
+katex 0.18.4
+highlight.js 11.12.0 (cdn-assets common-languages build)
+mermaid 11.17.2
+github-markdown-css 5.9.0
+fetched 2026-08-31T05:47:22Z

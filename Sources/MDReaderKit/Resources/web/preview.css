@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+/* The reader column: a comfortable book-like measure, centered. */
+.page {
+  display: flex;
+  justify-content: center;
+}
+
+.markdown-body {
+  width: 100%;
+  max-width: 760px;
+  padding: 32px;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+.markdown-body pre {
+  border-radius: 6px;
+}
+
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+}
+
+.mermaid-error {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: light-dark(#9a3412, #fdba74);
+  border: 1px solid light-dark(#fdba74, #9a3412);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: rgba(255, 165, 0, 0.08);
+  white-space: pre-wrap;
+}
