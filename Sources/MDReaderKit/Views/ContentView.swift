@@ -87,7 +87,9 @@ public struct ContentView: View {
         .onChange(of: viewMode) { _, newMode in
             previewModel.syncEnabled = newMode == .split
             if newMode == .split {
-                // Align the preview to the editor's current position.
+                // Equal panes on every entry into Split, preview aligned to
+                // the editor's current position.
+                splitFraction = 0.5
                 arbiter.noteProgrammaticScroll(on: .preview)
                 previewModel.scroll(toFractionalLine: editorModel.topFractionalLine())
             }
@@ -97,20 +99,57 @@ public struct ContentView: View {
         }
     }
 
+    /// Fraction of the width given to the editor in Split mode; reset to an
+    /// even 50/50 every time Split is entered, draggable afterwards.
+    @State private var splitFraction: CGFloat = 0.5
+    @State private var isDraggingDivider = false
+
     private var panes: some View {
-        HSplitView {
-            if viewMode != .reader {
-                editorPane
-                    .frame(minWidth: 250, idealWidth: 600, maxWidth: .infinity,
-                           maxHeight: .infinity)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if viewMode != .reader {
+                    editorPane
+                        .frame(width: paneWidths(total: geometry.size.width).editor)
+                }
+                if viewMode == .split {
+                    splitDivider(total: geometry.size.width)
+                }
+                if viewMode != .source {
+                    PreviewView(model: previewModel, text: document.text)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
-            if viewMode != .source {
-                PreviewView(model: previewModel, text: document.text)
-                    .frame(minWidth: 250, idealWidth: 600, maxWidth: .infinity,
-                           maxHeight: .infinity)
-            }
+            .coordinateSpace(name: "panes")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func paneWidths(total: CGFloat) -> (editor: CGFloat?, minPane: CGFloat) {
+        guard viewMode == .split else { return (nil, 0) }  // single pane fills
+        let minPane: CGFloat = min(250, total / 2)
+        let editor = min(max(total * splitFraction, minPane), total - minPane)
+        return (editor, minPane)
+    }
+
+    private func splitDivider(total: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle().inset(by: -4))
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("panes"))
+                    .onChanged { value in
+                        isDraggingDivider = true
+                        let minPane = paneWidths(total: total).minPane
+                        let x = min(max(value.location.x, minPane), total - minPane)
+                        splitFraction = x / total
+                    }
+                    .onEnded { _ in isDraggingDivider = false }
+            )
     }
 
     private var editorPane: some View {
