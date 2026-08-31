@@ -16,6 +16,13 @@ HLJS=11.12.0
 MERMAID=11.17.2
 GH_MD_CSS=5.9.0
 
+# Remember the previously committed checksums so a changed CDN response for
+# the SAME pinned versions is caught (supply-chain guard).
+OLD_CHECKSUMS=""
+OLD_PINS=""
+if [ -f "$VENDOR/CHECKSUMS.txt" ]; then OLD_CHECKSUMS=$(cat "$VENDOR/CHECKSUMS.txt"); fi
+if [ -f "$VENDOR/VERSIONS.txt" ]; then OLD_PINS=$(grep -v '^fetched ' "$VENDOR/VERSIONS.txt"); fi
+
 rm -rf "$VENDOR"
 mkdir -p "$VENDOR"/{markdown-it,markdown-it-task-lists,markdown-it-katex,katex,highlightjs,mermaid,github-markdown-css}
 
@@ -64,5 +71,21 @@ mermaid $MERMAID
 github-markdown-css $GH_MD_CSS
 fetched $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
+
+# Record SHA-256 of every vendored file; verify against the previous run
+# when the version pins are unchanged.
+(cd "$VENDOR" && find . -type f ! -name CHECKSUMS.txt ! -name VERSIONS.txt -print0 \
+  | sort -z | xargs -0 shasum -a 256 > CHECKSUMS.txt)
+
+NEW_PINS=$(grep -v '^fetched ' "$VENDOR/VERSIONS.txt")
+if [ -n "$OLD_CHECKSUMS" ] && [ "$OLD_PINS" = "$NEW_PINS" ]; then
+  if [ "$OLD_CHECKSUMS" != "$(cat "$VENDOR/CHECKSUMS.txt")" ]; then
+    echo "" >&2
+    echo "ERROR: version pins are unchanged but fetched content differs from the" >&2
+    echo "previously committed checksums. Possible CDN tampering — investigate with" >&2
+    echo "'git diff $VENDOR' before committing." >&2
+    exit 1
+  fi
+fi
 
 echo "done. vendor size: $(du -sh "$VENDOR" | cut -f1)"

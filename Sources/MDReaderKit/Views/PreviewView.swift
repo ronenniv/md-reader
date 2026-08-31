@@ -1,14 +1,29 @@
 import SwiftUI
 import WebKit
 
+/// Preview-related preferences, stored in UserDefaults.
+public enum PreviewPreferences {
+    public static let loadRemoteImagesKey = "loadRemoteImages"
+
+    /// Remote (http/https) content in the preview is blocked by default:
+    /// a markdown file can otherwise embed a tracking pixel that reveals
+    /// when/where it is opened. Toggle via View ▸ Load Remote Images.
+    public static var loadRemoteImages: Bool {
+        UserDefaults.standard.bool(forKey: loadRemoteImagesKey)
+    }
+}
+
 /// Serves files (images) referenced by relative paths in the markdown from
 /// the current document's directory, via the custom mdfile:// scheme.
+/// Absolute paths are rejected; reads happen off the main thread.
 final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
     final class DirectoryBox {
         var url: URL?
     }
 
     let directory: DirectoryBox
+    /// Tasks that have not been stopped; responding to a stopped task traps.
+    private var activeTasks = Set<ObjectIdentifier>()
 
     init(directory: DirectoryBox) {
         self.directory = directory
@@ -26,27 +41,44 @@ final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
             let base = directory.url,
             let url = urlSchemeTask.request.url,
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let relativePath = components.queryItems?.first(where: { $0.name == "p" })?.value
+            let relativePath = components.queryItems?.first(where: { $0.name == "p" })?.value,
+            !relativePath.hasPrefix("/"),
+            !relativePath.hasPrefix("~")
         else {
             urlSchemeTask.didFailWithError(CocoaError(.fileNoSuchFile))
             return
         }
-        let fileURL = URL(fileURLWithPath: relativePath, relativeTo: base).standardizedFileURL
-        guard
-            let mime = Self.mimeTypes[fileURL.pathExtension.lowercased()],
+        // Force directory semantics on the base so relative paths resolve
+        // inside it rather than against its parent.
+        let directoryBase = URL(fileURLWithPath: base.path, isDirectory: true)
+        let fileURL = URL(fileURLWithPath: relativePath, relativeTo: directoryBase).standardizedFileURL
+        guard let mime = Self.mimeTypes[fileURL.pathExtension.lowercased()] else {
+            urlSchemeTask.didFailWithError(CocoaError(.fileNoSuchFile))
+            return
+        }
+        let taskID = ObjectIdentifier(urlSchemeTask)
+        activeTasks.insert(taskID)
+        DispatchQueue.global(qos: .userInitiated).async {
             let data = try? Data(contentsOf: fileURL)
-        else {
-            urlSchemeTask.didFailWithError(CocoaError(.fileNoSuchFile))
-            return
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.activeTasks.remove(taskID) != nil else { return }
+                guard let data else {
+                    urlSchemeTask.didFailWithError(CocoaError(.fileNoSuchFile))
+                    return
+                }
+                let response = URLResponse(
+                    url: url, mimeType: mime, expectedContentLength: data.count,
+                    textEncodingName: nil)
+                urlSchemeTask.didReceive(response)
+                urlSchemeTask.didReceive(data)
+                urlSchemeTask.didFinish()
+            }
         }
-        let response = URLResponse(
-            url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)
-        urlSchemeTask.didReceive(response)
-        urlSchemeTask.didReceive(data)
-        urlSchemeTask.didFinish()
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        activeTasks.remove(ObjectIdentifier(urlSchemeTask))
+    }
 }
 
 /// WKUserContentController retains its handlers; this weak proxy breaks the
@@ -99,6 +131,9 @@ public final class PreviewModel: NSObject, ObservableObject {
             "window.setSyncEnabled(\(syncEnabled ? "true" : "false"));", completionHandler: nil)
     }
 
+    private var defaultsObserver: NSObjectProtocol?
+    private var appliedRemotePolicy: Bool?
+
     override public init() {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(
@@ -113,8 +148,68 @@ public final class PreviewModel: NSObject, ObservableObject {
         // Let the native window background show through (no white flash).
         webView.setValue(false, forKey: "drawsBackground")
 
+        applyRemoteContentPolicy()
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyRemoteContentPolicy()
+            }
+        }
+
         let root = ResourceLocator.webRoot
         webView.loadFileURL(root.appendingPathComponent("preview.html"), allowingReadAccessTo: root)
+    }
+
+    deinit {
+        if let defaultsObserver {
+            NotificationCenter.default.removeObserver(defaultsObserver)
+        }
+    }
+
+    // MARK: - Remote content blocking
+
+    /// Compiled once per process: blocks every http/https subresource load.
+    private static var remoteBlockList: WKContentRuleList?
+
+    private static func loadRemoteBlockList() async -> WKContentRuleList? {
+        if let remoteBlockList { return remoteBlockList }
+        let rules = #"[{"trigger":{"url-filter":"^https?://.*"},"action":{"type":"block"}}]"#
+        let list = await withCheckedContinuation { continuation in
+            WKContentRuleListStore.default().compileContentRuleList(
+                forIdentifier: "block-remote-content", encodedContentRuleList: rules
+            ) { list, _ in
+                continuation.resume(returning: list)
+            }
+        }
+        remoteBlockList = list
+        return list
+    }
+
+    private func applyRemoteContentPolicy() {
+        let allowRemote = PreviewPreferences.loadRemoteImages
+        guard appliedRemotePolicy != allowRemote else { return }
+        appliedRemotePolicy = allowRemote
+        Task { @MainActor in
+            let controller = webView.configuration.userContentController
+            controller.removeAllContentRuleLists()
+            if !allowRemote, let list = await Self.loadRemoteBlockList() {
+                controller.add(list)
+            }
+            if let text = lastQueuedText {
+                renderImmediately(text)
+            }
+        }
+    }
+
+    // MARK: - External links
+
+    /// Only these schemes may leave the app when a link is clicked. Anything
+    /// else (file://, app-specific schemes, …) from an untrusted markdown
+    /// file could launch programs or trigger vulnerable scheme handlers.
+    nonisolated public static func isAllowedExternalURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return ["http", "https", "mailto"].contains(scheme)
     }
 
     /// Debounced render used by the SwiftUI update path.
@@ -244,9 +339,11 @@ extension PreviewModel: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        // Links open in the default browser; the preview itself never navigates.
+        // Links open in the default browser; the preview itself never
+        // navigates. Only safe schemes may leave the app — file:// or custom
+        // schemes in a malicious markdown could launch local programs.
         if navigationAction.navigationType == .linkActivated {
-            if let url = navigationAction.request.url {
+            if let url = navigationAction.request.url, Self.isAllowedExternalURL(url) {
                 NSWorkspace.shared.open(url)
             }
             decisionHandler(.cancel)

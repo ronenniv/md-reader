@@ -21,7 +21,7 @@ app: build
 	@if [ -f packaging/AppIcon.icns ]; then cp packaging/AppIcon.icns $(DIST)/Contents/Resources/AppIcon.icns; fi
 	printf 'APPL????' > $(DIST)/Contents/PkgInfo
 	plutil -lint $(DIST)/Contents/Info.plist
-	codesign --force -s - $(DIST)
+	codesign --force -o runtime -s - $(DIST)
 
 run: app
 	open $(DIST)

@@ -47,6 +47,7 @@ extension FocusedValues {
 /// active tab via the focused scene.
 public struct ViewModeCommands: Commands {
     @FocusedBinding(\.viewMode) private var viewMode: ViewMode?
+    @AppStorage(PreviewPreferences.loadRemoteImagesKey) private var loadRemoteImages = false
 
     public init() {}
 
@@ -61,6 +62,10 @@ public struct ViewModeCommands: Commands {
             Button("Split") { viewMode = .split }
                 .keyboardShortcut("3", modifiers: .command)
                 .disabled(viewMode == nil)
+            Divider()
+            // Off by default: remote images in untrusted markdown act as
+            // tracking pixels.
+            Toggle("Load Remote Images", isOn: $loadRemoteImages)
             Divider()
         }
     }
