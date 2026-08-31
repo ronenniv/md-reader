@@ -4,7 +4,9 @@
   const content = document.getElementById('content');
   let lastText = '';
   let lineEls = [];
+  let lineTops = null; // cached absolute tops, invalidated on layout changes
   let suppressScrollUntil = 0;
+  let syncEnabled = false; // Swift enables this in Split mode only
 
   const isDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
 
@@ -92,6 +94,7 @@
         if (mermaidCache.size > 100) mermaidCache.clear();
         mermaidCache.set(hash, svg);
         node.innerHTML = svg;
+        lineTops = null;
       } catch (err) {
         // mermaid can leave an orphaned scratch element behind on failure
         document.querySelectorAll('body > [id^="dmmd"]').forEach((el) => el.remove());
@@ -105,14 +108,21 @@
     lineEls = Array.from(content.querySelectorAll('[data-line]'))
       .map((el) => ({ line: Number(el.dataset.line), el }))
       .sort((a, b) => a.line - b.line);
+    lineTops = null;
+  }
+
+  // One batched layout pass; scrolling then only binary-searches numbers
+  // (repeated getBoundingClientRect during scroll causes visible jank).
+  function tops() {
+    if (lineTops === null) {
+      const scrollY = window.scrollY;
+      lineTops = lineEls.map(({ el }) => el.getBoundingClientRect().top + scrollY);
+    }
+    return lineTops;
   }
 
   function suppress(ms) {
     suppressScrollUntil = performance.now() + ms;
-  }
-
-  function absTop(el) {
-    return el.getBoundingClientRect().top + window.scrollY;
   }
 
   window.renderMarkdown = (text) => {
@@ -125,9 +135,14 @@
     renderMermaid();
   };
 
+  window.setSyncEnabled = (enabled) => {
+    syncEnabled = !!enabled;
+  };
+
   window.scrollToLine = (fracLine) => {
     if (!lineEls.length) return;
     suppress(150);
+    const t = tops();
     let lo = 0;
     let hi = lineEls.length - 1;
     while (lo < hi) {
@@ -136,13 +151,12 @@
       else hi = mid - 1;
     }
     const a = lineEls[lo];
-    const b = lineEls[lo + 1];
-    const aTop = absTop(a.el);
+    const aTop = t[lo];
     let y = aTop;
-    if (b) {
-      const bTop = absTop(b.el);
-      const t = Math.max(0, Math.min(1, (fracLine - a.line) / Math.max(1e-6, b.line - a.line)));
-      y = aTop + t * (bTop - aTop);
+    if (lo + 1 < lineEls.length) {
+      const b = lineEls[lo + 1];
+      const k = Math.max(0, Math.min(1, (fracLine - a.line) / Math.max(1e-6, b.line - a.line)));
+      y = aTop + k * (t[lo + 1] - aTop);
     } else {
       y = aTop + (fracLine - a.line) * 24;
     }
@@ -151,24 +165,20 @@
 
   function reportScroll() {
     if (!lineEls.length) return;
+    const t = tops();
     const target = window.scrollY + 16;
     let lo = 0;
-    let hi = lineEls.length - 1;
+    let hi = t.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (absTop(lineEls[mid].el) <= target) lo = mid;
+      if (t[mid] <= target) lo = mid;
       else hi = mid - 1;
     }
     const a = lineEls[lo];
-    const b = lineEls[lo + 1];
-    const aTop = absTop(a.el);
     let frac = a.line;
-    if (b) {
-      const bTop = absTop(b.el);
-      if (bTop > aTop) {
-        const t = Math.max(0, Math.min(1, (target - aTop) / (bTop - aTop)));
-        frac = a.line + t * (b.line - a.line);
-      }
+    if (lo + 1 < lineEls.length && t[lo + 1] > t[lo]) {
+      const k = Math.max(0, Math.min(1, (target - t[lo]) / (t[lo + 1] - t[lo])));
+      frac = a.line + k * (lineEls[lo + 1].line - a.line);
     }
     if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.scrolled) {
       window.webkit.messageHandlers.scrolled.postMessage(frac);
@@ -179,16 +189,30 @@
   window.addEventListener(
     'scroll',
     () => {
+      if (!syncEnabled) return;
       if (performance.now() < suppressScrollUntil) return;
       if (scrollScheduled) return;
       scrollScheduled = true;
       requestAnimationFrame(() => {
         scrollScheduled = false;
+        if (!syncEnabled) return;
         if (performance.now() < suppressScrollUntil) return;
         reportScroll();
       });
     },
     { passive: true }
+  );
+
+  // Anything that changes layout invalidates the cached positions.
+  window.addEventListener('resize', () => {
+    lineTops = null;
+  });
+  content.addEventListener(
+    'load',
+    () => {
+      lineTops = null;
+    },
+    true
   );
 
   // Re-theme mermaid when the appearance flips.

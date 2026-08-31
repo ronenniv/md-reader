@@ -217,14 +217,32 @@ public struct EditorView: NSViewRepresentable {
             }
         }
 
+        private var lastScrollEmit: TimeInterval = 0
+        private let scrollEmitInterval: TimeInterval = 1.0 / 60.0
+
+        /// Leading-edge throttle: emit immediately when enough time has
+        /// passed (so the preview tracks live scrolling without lag), with a
+        /// trailing emission to settle on the final position.
         private func scheduleScrollReport() {
             guard parent.onScroll != nil else { return }
-            pendingScrollWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                self?.reportScroll()
+            let now = ProcessInfo.processInfo.systemUptime
+            let elapsed = now - lastScrollEmit
+            if elapsed >= scrollEmitInterval {
+                lastScrollEmit = now
+                pendingScrollWork?.cancel()
+                pendingScrollWork = nil
+                reportScroll()
+            } else if pendingScrollWork == nil {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.pendingScrollWork = nil
+                    self.lastScrollEmit = ProcessInfo.processInfo.systemUptime
+                    self.reportScroll()
+                }
+                pendingScrollWork = work
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + (scrollEmitInterval - elapsed), execute: work)
             }
-            pendingScrollWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: work)
         }
 
         private func reportScroll() {

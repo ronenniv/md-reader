@@ -85,6 +85,20 @@ public final class PreviewModel: NSObject, ObservableObject {
         set { directoryBox.url = newValue }
     }
 
+    /// Scroll-sync reporting inside the page is enabled only in Split mode,
+    /// so Reader-mode scrolling never does sync work.
+    public var syncEnabled = false {
+        didSet {
+            guard isReady, syncEnabled != oldValue else { return }
+            pushSyncEnabled()
+        }
+    }
+
+    private func pushSyncEnabled() {
+        webView.evaluateJavaScript(
+            "window.setSyncEnabled(\(syncEnabled ? "true" : "false"));", completionHandler: nil)
+    }
+
     override public init() {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(
@@ -136,6 +150,9 @@ public final class PreviewModel: NSObject, ObservableObject {
         switch message.name {
         case "ready":
             isReady = true
+            if syncEnabled {
+                pushSyncEnabled()
+            }
             if let pendingText {
                 renderImmediately(pendingText)
             }

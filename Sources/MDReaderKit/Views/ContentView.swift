@@ -5,7 +5,9 @@ public struct ContentView: View {
     @Binding var document: MarkdownDocument
     let fileURL: URL?
 
-    @State private var viewMode: ViewMode = .split
+    // Single-pane by default: Reader for existing files, Source for new
+    // documents (set in setUp). Split is opt-in via toolbar/⌘3.
+    @State private var viewMode: ViewMode = .reader
     @StateObject private var editorModel = EditorModel()
     @StateObject private var previewModel = PreviewModel()
     @StateObject private var fileWatcher = FileWatcher()
@@ -54,6 +56,14 @@ public struct ContentView: View {
         .onChange(of: fileURL) { _, newURL in
             rewatch(newURL)
         }
+        .onChange(of: viewMode) { _, newMode in
+            previewModel.syncEnabled = newMode == .split
+            if newMode == .split {
+                // Align the preview to the editor's current position.
+                arbiter.noteProgrammaticScroll(on: .preview)
+                previewModel.scroll(toFractionalLine: editorModel.topFractionalLine())
+            }
+        }
         .onChange(of: document.text) { _, newText in
             wordCount = TextMetrics.wordCount(of: newText)
         }
@@ -84,8 +94,9 @@ public struct ContentView: View {
                 cursorLine = line
                 cursorColumn = column
             },
-            onScroll: { fractionalLine in
-                guard viewMode == .split else { return }
+            // No scroll callback outside Split: the coordinator then skips
+            // all scroll computation entirely.
+            onScroll: viewMode != .split ? nil : { fractionalLine in
                 arbiter.noteProgrammaticScroll(on: .preview)
                 previewModel.scroll(toFractionalLine: fractionalLine)
             }
@@ -103,6 +114,12 @@ public struct ContentView: View {
     }
 
     private func setUp() {
+        // New/empty documents open in Source (you can't type in Reader);
+        // existing files open in Reader.
+        if document.text.isEmpty && fileURL == nil {
+            viewMode = .source
+        }
+        previewModel.syncEnabled = viewMode == .split
         wordCount = TextMetrics.wordCount(of: document.text)
         previewModel.onScroll = { fractionalLine in
             guard viewMode == .split else { return }
