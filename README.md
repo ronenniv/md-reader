@@ -28,11 +28,14 @@ with Command Line Tools via SwiftPM and a Makefile.
 
 ```bash
 brew tap ronenniv/tap
-brew install --cask --no-quarantine mdreader
+brew trust ronenniv/tap          # Homebrew ≥6 requires trusting third-party taps
+brew install --cask mdreader
+xattr -dr com.apple.quarantine /Applications/MDReader.app
 ```
 
-`--no-quarantine` is needed while releases are ad-hoc signed; once releases
-are notarized (see below) it can be dropped.
+The `xattr` step is needed while releases are ad-hoc signed (Homebrew 6
+removed `--no-quarantine`); once releases are notarized it can be dropped.
+Run it **before** first launch.
 
 ## Build & run from source
 
