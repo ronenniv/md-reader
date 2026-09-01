@@ -24,7 +24,17 @@ with Command Line Tools via SwiftPM and a Makefile.
   cleanly, or show a Reload / Keep-mine banner if you have unsaved edits.
 - **Status bar**: line/column, word count, reading time.
 
-## Build & run
+## Install with Homebrew
+
+```bash
+brew tap ronenniv/tap
+brew install --cask --no-quarantine mdreader
+```
+
+`--no-quarantine` is needed while releases are ad-hoc signed; once releases
+are notarized (see below) it can be dropped.
+
+## Build & run from source
 
 Requires macOS 14+ and Xcode Command Line Tools (`xcode-select --install`).
 
@@ -35,6 +45,30 @@ make install    # install to /Applications and make MDReader the DEFAULT
                 # app for .md/.markdown — double-click opens MDReader
 make clean
 ```
+
+## Releases & Homebrew tap
+
+Pushing a `vX.Y.Z` tag builds, tests, and publishes a GitHub Release with
+`MDReader.zip` + its sha256 (`.github/workflows/release.yml`). After a new
+release, update `version` and `sha256` in
+[ronenniv/homebrew-tap](https://github.com/ronenniv/homebrew-tap)
+`Casks/mdreader.rb`. Keep `CFBundleShortVersionString` in
+`packaging/Info.plist` in sync with the tag.
+
+## Signing & notarization
+
+`make app` signs with hardened runtime — automatically using a
+**Developer ID Application** certificate when one is in the keychain,
+falling back to ad-hoc otherwise. To notarize (one-time setup: install the
+Developer ID certificate, then
+`xcrun notarytool store-credentials mdreader-notary --apple-id … --team-id … --password <app-specific>`):
+
+```bash
+make notarize   # sign → submit to Apple → staple → MDReader.zip + sha256
+```
+
+Then upload the stapled zip to the release (`gh release upload vX.Y.Z
+MDReader.zip --clobber`) and update the cask's sha256.
 
 Always launch the assembled app (`make run`), never the bare binary —
 document handling needs the bundle's Info.plist.

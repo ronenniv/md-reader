@@ -18,10 +18,23 @@ app: build
 	cp $(BIN) $(DIST)/Contents/MacOS/$(APP)
 	cp -R $(RESBUNDLE) $(DIST)/Contents/Resources/
 	cp packaging/Info.plist $(DIST)/Contents/Info.plist
+	cp scripts/set-default-handler.swift $(DIST)/Contents/Resources/
 	@if [ -f packaging/AppIcon.icns ]; then cp packaging/AppIcon.icns $(DIST)/Contents/Resources/AppIcon.icns; fi
 	printf 'APPL????' > $(DIST)/Contents/PkgInfo
 	plutil -lint $(DIST)/Contents/Info.plist
-	codesign --force -o runtime -s - $(DIST)
+	@ID=$$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1); \
+	if [ -n "$$ID" ]; then \
+		echo "codesign with '$$ID' (hardened runtime + timestamp)"; \
+		codesign --force --options runtime --timestamp -s "$$ID" $(DIST); \
+	else \
+		echo "codesign ad-hoc (no Developer ID certificate found)"; \
+		codesign --force -o runtime -s - $(DIST); \
+	fi
+
+# Notarize dist/MDReader.app (requires a Developer ID signature and a saved
+# notarytool keychain profile — see README).
+notarize: app
+	bash scripts/notarize.sh
 
 run: app
 	open $(DIST)
