@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      # Pinned by commit SHA (tags are mutable).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Test
+        run: make test
+
+      - name: Assemble app bundle
+        run: make app
+
+      - name: Verify code signature
+        run: codesign --verify --verbose dist/MDReader.app
+
+      - name: Zip app
+        run: ditto -c -k --keepParent dist/MDReader.app MDReader.zip
+
+      - name: Checksum (for the Homebrew cask sha256)
+        run: shasum -a 256 MDReader.zip | tee MDReader.zip.sha256
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" MDReader.zip MDReader.zip.sha256 \
+            --title "MDReader $GITHUB_REF_NAME" \
+            --generate-notes
