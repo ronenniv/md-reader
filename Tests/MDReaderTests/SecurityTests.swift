@@ -117,3 +117,15 @@ import WebKit
         #expect(task.failed != nil)
     }
 }
+@Suite struct ResourceLocatorTests {
+    /// The manual search must find the resource bundle in the test context
+    /// too (this replaced the crash-prone Bundle.module accessor).
+    @Test func locatesWebRootWithoutBundleModule() {
+        let root = ResourceLocator.locateWebRoot()
+        #expect(root != nil)
+        if let root {
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("preview.html").path))
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("vendor").path))
+        }
+    }
+}
