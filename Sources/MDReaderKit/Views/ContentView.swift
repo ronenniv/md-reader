@@ -33,7 +33,12 @@ public struct ContentView: View {
                 )
             }
             panes
-            StatusBarView(line: cursorLine, column: cursorColumn, wordCount: wordCount)
+            StatusBarView(
+                line: cursorLine,
+                column: cursorColumn,
+                wordCount: wordCount,
+                saveState: DocumentSaveState.resolve(hasFile: fileURL != nil, isDirty: isDirty)
+            )
         }
         .toolbar {
             // nativeTooltip attaches real AppKit tooltips; SwiftUI's .help()

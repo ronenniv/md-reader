@@ -68,3 +68,18 @@ import Testing
                 == .conflict)
     }
 }
+
+@Suite struct DocumentSaveStateTests {
+    @Test func untitledIsUnsaved() {
+        #expect(DocumentSaveState.resolve(hasFile: false, isDirty: true) == .unsaved)
+        #expect(DocumentSaveState.resolve(hasFile: false, isDirty: false) == .unsaved)
+    }
+
+    @Test func dirtyFileIsEdited() {
+        #expect(DocumentSaveState.resolve(hasFile: true, isDirty: true) == .edited)
+    }
+
+    @Test func cleanFileIsSaved() {
+        #expect(DocumentSaveState.resolve(hasFile: true, isDirty: false) == .saved)
+    }
+}

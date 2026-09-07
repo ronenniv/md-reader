@@ -10,20 +10,62 @@ public enum TextMetrics {
     }
 }
 
+/// Whether the document matches what's on disk.
+public enum DocumentSaveState: Equatable, Sendable {
+    /// Untitled — never written to disk.
+    case unsaved
+    /// File-backed with unsaved changes.
+    case edited
+    /// Matches the file on disk.
+    case saved
+
+    public static func resolve(hasFile: Bool, isDirty: Bool) -> DocumentSaveState {
+        guard hasFile else { return .unsaved }
+        return isDirty ? .edited : .saved
+    }
+
+    var label: String {
+        switch self {
+        case .unsaved: return "Not Saved"
+        case .edited: return "Edited"
+        case .saved: return "Saved"
+        }
+    }
+
+    var dotColor: Color {
+        switch self {
+        case .unsaved, .edited: return .orange
+        case .saved: return .green.opacity(0.8)
+        }
+    }
+}
+
 public struct StatusBarView: View {
     let line: Int
     let column: Int
     let wordCount: Int
+    let saveState: DocumentSaveState
 
-    public init(line: Int, column: Int, wordCount: Int) {
+    public init(line: Int, column: Int, wordCount: Int, saveState: DocumentSaveState) {
         self.line = line
         self.column = column
         self.wordCount = wordCount
+        self.saveState = saveState
     }
 
     public var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Text("Ln \(line), Col \(column)")
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(saveState.dotColor)
+                    .frame(width: 6, height: 6)
+                Text(saveState.label)
+            }
+            .nativeTooltip(
+                saveState == .saved
+                    ? "All changes are saved"
+                    : "The document has changes not yet saved to disk (⌘S)")
             Spacer()
             Text(summary)
         }
@@ -33,6 +75,7 @@ public struct StatusBarView: View {
         .frame(height: 24)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .animation(.easeInOut(duration: 0.15), value: saveState)
     }
 
     private var summary: String {
