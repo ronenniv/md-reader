@@ -89,6 +89,9 @@ final class TooltipPanel {
     }
 
     func show(text: String, near screenPoint: NSPoint) {
+        // Never swap content while the panel is on screen — replacing the
+        // hosting view mid-display can re-enter layout.
+        panel.orderOut(nil)
         let content = NSHostingView(rootView: TooltipBubble(text: text))
         let size = content.fittingSize
         content.frame = NSRect(origin: .zero, size: size)

@@ -54,20 +54,30 @@ public struct StatusBarView: View {
     }
 
     public var body: some View {
+        // No animation and fixed widths on purpose: state/label changes must
+        // never alter this view's measured size. A width change here feeds
+        // back into the window's min-size computation, and combined with an
+        // in-flight animation it can invalidate the SwiftUI graph during
+        // AppKit's constraints pass — an NSException that killed the app in
+        // the field (v1.0.3 crash, 2026-09-07).
         HStack(spacing: 12) {
             Text("Ln \(line), Col \(column)")
+                .monospacedDigit()
             HStack(spacing: 4) {
                 Circle()
                     .fill(saveState.dotColor)
                     .frame(width: 6, height: 6)
                 Text(saveState.label)
+                Spacer(minLength: 0)
             }
+            .frame(width: 84)
             .nativeTooltip(
                 saveState == .saved
                     ? "All changes are saved"
                     : "The document has changes not yet saved to disk (⌘S)")
             Spacer()
             Text(summary)
+                .monospacedDigit()
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -75,7 +85,6 @@ public struct StatusBarView: View {
         .frame(height: 24)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
-        .animation(.easeInOut(duration: 0.15), value: saveState)
     }
 
     private var summary: String {
