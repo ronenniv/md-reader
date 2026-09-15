@@ -54,12 +54,10 @@ public struct StatusBarView: View {
     }
 
     public var body: some View {
-        // No animation and fixed widths on purpose: state/label changes must
-        // never alter this view's measured size. A width change here feeds
-        // back into the window's min-size computation, and combined with an
-        // in-flight animation it can invalidate the SwiftUI graph during
-        // AppKit's constraints pass — an NSException that killed the app in
-        // the field (v1.0.3 crash, 2026-09-07).
+        // Fixed widths and monospaced digits keep the bar from jiggling as
+        // the cursor moves or the save state flips. (v1.0.4 blamed this bar
+        // for the 2026-09-07 layout crash; the culprit was the tooltip
+        // panel — see TooltipPanel.)
         HStack(spacing: 12) {
             Text("Ln \(line), Col \(column)")
                 .monospacedDigit()

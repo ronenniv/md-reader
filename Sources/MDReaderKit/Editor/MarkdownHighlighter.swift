@@ -41,7 +41,11 @@ public struct MarkdownHighlighter {
     public init() {}
 
     public func highlight(_ storage: NSTextStorage) {
-        let text = storage.string as NSString
+        // One bridged copy for the whole pass. NSTextStorage.string hands out
+        // its mutable backing store, which Swift copies on every bridge, so
+        // reading it per line made highlighting quadratic in document size.
+        let string = storage.string
+        let text = string as NSString
         let fullRange = NSRange(location: 0, length: text.length)
 
         storage.beginEditing()
@@ -57,7 +61,7 @@ public struct MarkdownHighlighter {
         }
 
         for lineRange in lineRanges {
-            if Self.fence.firstMatch(in: storage.string, range: lineRange) != nil {
+            if Self.fence.firstMatch(in: string, range: lineRange) != nil {
                 inFence.toggle()
                 storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: lineRange)
                 continue
@@ -66,15 +70,13 @@ public struct MarkdownHighlighter {
                 storage.addAttribute(.backgroundColor, value: Self.codeBackground, range: lineRange)
                 continue
             }
-            highlightLine(storage, in: lineRange)
+            highlightLine(storage, string: string, in: lineRange)
         }
 
         storage.endEditing()
     }
 
-    private func highlightLine(_ storage: NSTextStorage, in lineRange: NSRange) {
-        let string = storage.string
-
+    private func highlightLine(_ storage: NSTextStorage, string: String, in lineRange: NSRange) {
         if let m = Self.blockquote.firstMatch(in: string, range: lineRange) {
             storage.addAttribute(.foregroundColor, value: NSColor.systemGreen, range: lineRange)
             storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: m.range)

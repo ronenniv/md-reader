@@ -29,8 +29,11 @@ private struct NativeTooltip: NSViewRepresentable {
         override func mouseEntered(with event: NSEvent) {
             showTimer?.invalidate()
             showTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: false) { [weak self] _ in
-                guard let self, self.window != nil else { return }
-                TooltipPanel.shared.show(text: self.text, near: NSEvent.mouseLocation)
+                // Scheduled from the main thread, so it fires on the main run loop.
+                MainActor.assumeIsolated {
+                    guard let self, self.window != nil else { return }
+                    TooltipPanel.shared.show(text: self.text, near: NSEvent.mouseLocation)
+                }
             }
         }
 
@@ -68,10 +71,26 @@ private struct NativeTooltip: NSViewRepresentable {
 }
 
 /// A small floating, non-activating panel styled like a system tooltip.
+///
+/// Pure AppKit with frame-based layout — deliberately no SwiftUI inside.
+/// The 2026-09-07 field crashes (v1.0.3 and v1.0.4) came from an
+/// NSHostingView here: its updateConstraints pass drives the window's
+/// content min/max size from the SwiftUI graph, the graph invalidated
+/// itself during that measurement, and a panel this small has so few views
+/// that AppKit's layout-loop detector ("more Update Constraints in Window
+/// passes than there are views in the window") threw after a couple of
+/// rounds — an NSException AppKit turns into a crash regardless of
+/// NSApplicationCrashOnExceptions. With no constraints in the window there
+/// is no constraints pass to loop.
 @MainActor
 final class TooltipPanel {
     static let shared = TooltipPanel()
-    private let panel: NSPanel
+
+    /// Internal (not private) so tests can assert the panel's view tree.
+    let panel: NSPanel
+    private let bubble = BubbleView()
+    private let label = NSTextField(labelWithString: "")
+    private static let padding = NSSize(width: 8, height: 4)
 
     private init() {
         panel = NSPanel(
@@ -86,17 +105,30 @@ final class TooltipPanel {
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byClipping
+        label.maximumNumberOfLines = 1
+        // Frame-based on purpose: no Auto Layout means no constraint passes
+        // in this window at all.
+        label.translatesAutoresizingMaskIntoConstraints = true
+        bubble.translatesAutoresizingMaskIntoConstraints = true
+        bubble.addSubview(label)
+        panel.contentView = bubble
     }
 
     func show(text: String, near screenPoint: NSPoint) {
-        // Never swap content while the panel is on screen — replacing the
-        // hosting view mid-display can re-enter layout.
         panel.orderOut(nil)
-        let content = NSHostingView(rootView: TooltipBubble(text: text))
-        let size = content.fittingSize
-        content.frame = NSRect(origin: .zero, size: size)
-        panel.contentView = content
+        label.stringValue = text
+        label.sizeToFit()
+        let pad = Self.padding
+        let size = NSSize(
+            width: ceil(label.frame.width) + pad.width * 2,
+            height: ceil(label.frame.height) + pad.height * 2)
         panel.setContentSize(size)
+        label.setFrameOrigin(NSPoint(x: pad.width, y: pad.height))
+        bubble.needsDisplay = true
         // Below-right of the cursor, clamped to the screen.
         var origin = NSPoint(x: screenPoint.x + 10, y: screenPoint.y - size.height - 12)
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(screenPoint, $0.frame, false) }) {
@@ -105,6 +137,7 @@ final class TooltipPanel {
         }
         panel.setFrameOrigin(origin)
         panel.orderFrontRegardless()
+        panel.invalidateShadow()
     }
 
     func hide() {
@@ -112,22 +145,18 @@ final class TooltipPanel {
     }
 }
 
-private struct TooltipBubble: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
+/// Rounded, hairline-bordered tooltip background. Drawn rather than
+/// layer-colored so the semantic colors resolve against the panel's
+/// effective appearance (light/dark) at draw time.
+private final class BubbleView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+        NSColor.windowBackgroundColor.setFill()
+        path.fill()
+        NSColor.separatorColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 }
 

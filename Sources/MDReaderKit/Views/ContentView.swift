@@ -193,14 +193,30 @@ public struct ContentView: View {
         }
         previewModel.syncEnabled = viewMode == .split
         wordCount = TextMetrics.wordCount(of: document.text)
-        previewModel.onScroll = { fractionalLine in
-            guard viewMode == .split else { return }
-            guard arbiter.shouldPropagate(from: .preview) else { return }
-            arbiter.noteProgrammaticScroll(on: .editor)
-            editorModel.scroll(toFractionalLine: fractionalLine)
+
+        // Closures stored in the models must not capture `self`: this view
+        // value holds its @StateObjects strongly, so model → closure → view
+        // → model would be a retain cycle that leaks the web view, text view
+        // and file watcher (still firing) for every closed document. Capture
+        // bindings and weak model references instead.
+        let editor = editorModel
+        let syncArbiter = arbiter
+        let viewModeBinding = $viewMode
+        previewModel.onScroll = { [weak editor] fractionalLine in
+            guard viewModeBinding.wrappedValue == .split, let editor else { return }
+            guard syncArbiter.shouldPropagate(from: .preview) else { return }
+            syncArbiter.noteProgrammaticScroll(on: .editor)
+            editor.scroll(toFractionalLine: fractionalLine)
         }
-        fileWatcher.onChange = {
-            handleExternalChange()
+        let watcher = fileWatcher
+        let documentBinding = $document
+        let lastKnownDiskBinding = $lastKnownDiskText
+        let pendingDiskBinding = $pendingDiskText
+        fileWatcher.onChange = { [weak watcher] in
+            guard let watcher else { return }
+            Self.handleExternalChange(
+                watcher: watcher, document: documentBinding,
+                lastKnownDisk: lastKnownDiskBinding, pendingDisk: pendingDiskBinding)
         }
         rewatch(fileURL)
     }
@@ -217,25 +233,32 @@ public struct ContentView: View {
         }
     }
 
-    private func handleExternalChange() {
-        guard let url = fileWatcher.url, let data = try? Data(contentsOf: url) else { return }
+    /// Static so the file-watcher callback cannot capture the view (see setUp).
+    private static func handleExternalChange(
+        watcher: FileWatcher,
+        document: Binding<MarkdownDocument>,
+        lastKnownDisk: Binding<String?>,
+        pendingDisk: Binding<String?>
+    ) {
+        guard let url = watcher.url, let data = try? Data(contentsOf: url) else { return }
         guard let disk = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
         else { return }
+        let editor = document.wrappedValue.text
         let action = ExternalChangeResolver.resolve(
             disk: disk,
-            lastKnownDisk: lastKnownDiskText ?? document.text,
-            editor: document.text
+            lastKnownDisk: lastKnownDisk.wrappedValue ?? editor,
+            editor: editor
         )
         switch action {
         case .ignore:
             break
         case .adoptAsSaved:
-            lastKnownDiskText = disk
+            lastKnownDisk.wrappedValue = disk
         case .reloadSilently:
-            lastKnownDiskText = disk
-            document.text = disk
+            lastKnownDisk.wrappedValue = disk
+            document.wrappedValue.text = disk
         case .conflict:
-            pendingDiskText = disk
+            pendingDisk.wrappedValue = disk
         }
     }
 
@@ -272,7 +295,7 @@ public struct ContentView: View {
     private func saveAction() {
         if NSApp.sendAction(NSSelectorFromString("saveDocument:"), to: nil, from: nil) { return }
         if let url = fileURL {
-            try? document.data().write(to: url)
+            try? document.data().write(to: url, options: .atomic)
         } else {
             saveAsAction()
         }
@@ -284,7 +307,7 @@ public struct ContentView: View {
         panel.allowedContentTypes = [MarkdownDocument.markdownType]
         panel.nameFieldStringValue = fileURL?.lastPathComponent ?? "Untitled.md"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? document.data().write(to: url)
+        try? document.data().write(to: url, options: .atomic)
         Task { try? await openDocument(at: url) }
     }
 
@@ -309,7 +332,7 @@ public struct ContentView: View {
     private func performPDFExport(of text: String, to url: URL) async {
         do {
             let data = try await previewModel.pdfData(for: text)
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic)
         } catch {
             let alert = NSAlert()
             alert.messageText = "PDF export failed"

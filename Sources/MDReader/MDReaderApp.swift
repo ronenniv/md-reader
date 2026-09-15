@@ -6,13 +6,12 @@ struct MDReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
-        // SwiftUI registers NSApplicationCrashOnExceptions=YES, turning any
-        // AppKit layout exception into a crash that loses unsaved work. A
-        // sporadic constraints-reentrancy exception did exactly that in the
-        // field; prefer AppKit's legacy log-and-continue behavior. (set()
-        // writes the persistent domain, which outranks SwiftUI's
-        // registration domain.)
-        UserDefaults.standard.set(false, forKey: "NSApplicationCrashOnExceptions")
+        // v1.0.4 wrote NSApplicationCrashOnExceptions=false here hoping
+        // AppKit would log-and-continue on layout exceptions. It did not:
+        // the v1.0.4 crash went through +[NSApplication _crashOnException:]
+        // with the key already set to 0. Remove the stale override from the
+        // user's defaults instead of leaving a dead knob behind.
+        UserDefaults.standard.removeObject(forKey: "NSApplicationCrashOnExceptions")
     }
 
     var body: some Scene {

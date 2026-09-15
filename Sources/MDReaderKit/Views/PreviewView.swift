@@ -146,7 +146,14 @@ public final class PreviewModel: NSObject, ObservableObject {
         controller.add(MessageProxy(self), name: "scrolled")
         webView.navigationDelegate = self
         // Let the native window background show through (no white flash).
-        webView.setValue(false, forKey: "drawsBackground")
+        // drawsBackground is a private WebKit setter with no public
+        // equivalent; guard it so a future macOS dropping the selector
+        // degrades to a white page instead of an NSUnknownKeyException.
+        if webView.responds(to: Selector(("_setDrawsBackground:")))
+            || webView.responds(to: Selector(("setDrawsBackground:")))
+        {
+            webView.setValue(false, forKey: "drawsBackground")
+        }
 
         applyRemoteContentPolicy()
         defaultsObserver = NotificationCenter.default.addObserver(
