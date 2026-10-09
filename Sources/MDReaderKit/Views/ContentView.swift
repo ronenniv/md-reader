@@ -69,6 +69,12 @@ public struct ContentView: View {
                 }
             }
             ToolbarItem {
+                Button(action: printDocument) {
+                    Label("Print", systemImage: "printer")
+                        .nativeTooltip("Print the rendered document (⌘P)")
+                }
+            }
+            ToolbarItem {
                 Picker("View Mode", selection: $viewMode) {
                     ForEach([ViewMode.source, .split, .reader]) { mode in
                         Image(systemName: mode.symbolName)
@@ -81,6 +87,7 @@ public struct ContentView: View {
             }
         }
         .focusedSceneValue(\.viewMode, $viewMode)
+        .focusedSceneValue(\.documentPrint, DocumentPrintAction(perform: printDocument))
         .background(WindowAccessor())
         .dropDestination(for: URL.self) { urls, _ in
             handleDrop(urls)
@@ -334,12 +341,35 @@ public struct ContentView: View {
             let data = try await previewModel.pdfData(for: text)
             try data.write(to: url, options: .atomic)
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "PDF export failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
+            showError("PDF export failed", error)
         }
+    }
+
+    /// Prints the rendered document (what Reader shows), whatever the
+    /// current view mode, via the system print panel as a window sheet.
+    private func printDocument() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        let text = document.text
+        let title = fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        Task { await performPrint(of: text, title: title, in: window) }
+    }
+
+    @MainActor
+    private func performPrint(of text: String, title: String, in window: NSWindow) async {
+        do {
+            try await previewModel.printDocument(text, jobTitle: title, in: window)
+        } catch {
+            showError("Print failed", error)
+        }
+    }
+
+    @MainActor
+    private func showError(_ title: String, _ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private func handleDrop(_ urls: [URL]) -> Bool {

@@ -21,6 +21,7 @@ struct MDReaderApp: App {
         .defaultSize(width: 1100, height: 720)
         .commands {
             ViewModeCommands()
+            PrintCommands()
         }
     }
 }

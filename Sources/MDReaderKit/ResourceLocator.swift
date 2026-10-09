@@ -51,10 +51,18 @@ public enum ResourceLocator {
             Bundle.main.bundleURL,                            // bare-binary dev runs
         ]
         for case let base? in candidates {
-            let webRoot = base
-                .appendingPathComponent(bundleName)
-                .appendingPathComponent("web")
-            if FileManager.default.fileExists(
+            let bundleURL = base.appendingPathComponent(bundleName)
+            // SwiftPM has produced both layouts for this bundle: flat
+            // (resources at the bundle root; Swift ≤ 6.3) and a standard
+            // macOS bundle with Contents/Resources (the Swift 6.4 build
+            // system). Bundle(url:) resolves either; the flat path remains
+            // as a direct fallback in case the bundle cannot be opened.
+            var webRoots = [bundleURL.appendingPathComponent("web")]
+            if let resources = Bundle(url: bundleURL)?.resourceURL {
+                webRoots.insert(resources.appendingPathComponent("web"), at: 0)
+            }
+            for webRoot in webRoots
+            where FileManager.default.fileExists(
                 atPath: webRoot.appendingPathComponent("preview.html").path)
             {
                 return webRoot

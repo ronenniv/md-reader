@@ -23,6 +23,9 @@ with Command Line Tools via SwiftPM and a Makefile.
 - **External change watching**: edits made on disk by other programs reload
   cleanly, or show a Reload / Keep-mine banner if you have unsaved edits.
 - **Status bar**: line/column, word count, reading time.
+- **Print & export**: File ▸ Print… (⌘P) prints the rendered document through
+  the system print panel, paginated by WebKit and honouring Page Setup…
+  (⇧⌘P); Export PDF saves the rendered page from the toolbar.
 
 ## Install with Homebrew
 
@@ -40,6 +43,17 @@ Run it **before** first launch.
 ## Build & run from source
 
 Requires macOS 14+ and Xcode Command Line Tools (`xcode-select --install`).
+
+> **macOS 27 Command Line Tools:** the macOS 27 SDK turns SwiftUI's `@State`
+> into a compiler macro whose plugin (`SwiftUIMacros`) the CLT package does
+> not ship, so every `@State` fails with "plugin for module 'SwiftUIMacros'
+> not found". Until Apple fixes the CLT, build against the previous SDK that
+> the CLT installer leaves in place (full Xcode is unaffected):
+>
+> ```bash
+> export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+> make run
+> ```
 
 ```bash
 make run        # build, assemble dist/MDReader.app, launch

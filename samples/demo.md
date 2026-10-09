@@ -5,11 +5,10 @@ A torture test for every feature of the reader view.
 ## GFM basics
 
 Some **bold**, some *italic*, some ~~strikethrough~~, an `inline code span`,
-and an autolink: https://daringfireball.net/projects/markdown/
+and an autolink: https://darireball.net/projects/markdown/
 
 > A blockquote with **bold** inside it.
-> Second line of the quote.
-
+> Second line of the quot
 ### Table
 
 | Feature    | Status | Notes                 |

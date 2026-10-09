@@ -58,7 +58,7 @@ final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         let taskID = ObjectIdentifier(urlSchemeTask)
         activeTasks.insert(taskID)
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = try? Data(contentsOf: fileURL)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.activeTasks.remove(taskID) != nil else { return }
@@ -276,11 +276,13 @@ public final class PreviewModel: NSObject, ObservableObject {
     public enum ExportError: LocalizedError {
         case previewNotReady
         case emptyRender
+        case printFailed
 
         public var errorDescription: String? {
             switch self {
             case .previewNotReady: return "The preview did not finish loading."
             case .emptyRender: return "The document rendered to an empty page."
+            case .printFailed: return "The print job could not be started."
             }
         }
     }
@@ -297,10 +299,11 @@ public final class PreviewModel: NSObject, ObservableObject {
         }
     }
 
-    /// Renders `text` and captures the full page as PDF data. Works even if
-    /// the preview pane is not currently shown (the web view renders
-    /// off-screen in its own process).
-    public func pdfData(for text: String) async throws -> Data {
+    /// Renders `text` and waits for layout to settle (mermaid, KaTeX,
+    /// images): two consecutive identical height readings. Returns that
+    /// height. Works even if the preview pane is not currently shown (the
+    /// web view renders off-screen in its own process).
+    private func renderAndSettle(_ text: String) async throws -> Double {
         var deadline = Date().addingTimeInterval(10)
         while !isReady && Date() < deadline {
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -313,8 +316,6 @@ public final class PreviewModel: NSObject, ObservableObject {
         }
         renderImmediately(text)
 
-        // Wait for layout to settle (mermaid, KaTeX, images): two consecutive
-        // identical height readings.
         var lastHeight = -1.0
         var stableReadings = 0
         deadline = Date().addingTimeInterval(5)
@@ -329,13 +330,83 @@ public final class PreviewModel: NSObject, ObservableObject {
             }
         }
         guard lastHeight > 0 else { throw ExportError.emptyRender }
+        return lastHeight
+    }
 
+    /// Renders `text` and captures the full page as a single-page PDF.
+    public func pdfData(for text: String) async throws -> Data {
+        let height = try await renderAndSettle(text)
         let configuration = WKPDFConfiguration()
-        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: lastHeight)
+        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: height)
         return try await withCheckedThrowingContinuation { continuation in
             webView.createPDF(configuration: configuration) { result in
                 continuation.resume(with: result)
             }
+        }
+    }
+
+    /// Renders `text` and prints it through WebKit's paginated print
+    /// operation, so paper size, orientation and margins from the print
+    /// panel (and Page Setup…) apply.
+    ///
+    /// WebKit renders print pages only on the secondary thread that
+    /// NSPrintOperation spawns; a print operation driven on the main thread
+    /// is treated as a print-preview pass that hands back placeholder page
+    /// counts and never completes. So this always goes through
+    /// runModal(for:), which returns to the run loop immediately and
+    /// reports completion through its delegate. With `showsPanel` the
+    /// print panel is a sheet on `window`; tests pass a print info that
+    /// saves to a PDF file, the panel off, and an offscreen window.
+    /// Returns false when the user cancels or the job fails.
+    @discardableResult
+    public func printDocument(
+        _ text: String,
+        jobTitle: String,
+        in window: NSWindow,
+        printInfo: NSPrintInfo? = nil,
+        showsPanel: Bool = true
+    ) async throws -> Bool {
+        _ = try await renderAndSettle(text)
+        guard let info = (printInfo ?? NSPrintInfo.shared).copy() as? NSPrintInfo else {
+            throw ExportError.printFailed
+        }
+        let operation = webView.printOperation(with: info)
+        operation.jobTitle = jobTitle
+        operation.showsPrintPanel = showsPanel
+        operation.showsProgressPanel = showsPanel
+        operation.canSpawnSeparateThread = true
+        // WebKit's print view starts out with a zero frame; without a real
+        // one the pages come out blank.
+        operation.view?.frame = NSRect(origin: .zero, size: info.paperSize)
+        return await withCheckedContinuation { continuation in
+            let completion = PrintCompletion { success in
+                continuation.resume(returning: success)
+            }
+            // AppKit does not retain the delegate; carry a +1 reference in
+            // contextInfo and release it in the callback.
+            operation.runModal(
+                for: window,
+                delegate: completion,
+                didRun: #selector(PrintCompletion.printOperationDidRun(_:success:contextInfo:)),
+                contextInfo: Unmanaged.passRetained(completion).toOpaque())
+        }
+    }
+}
+
+/// Receives NSPrintOperation's didRun callback and forwards the outcome.
+private final class PrintCompletion: NSObject {
+    private let completion: (Bool) -> Void
+
+    init(_ completion: @escaping (Bool) -> Void) {
+        self.completion = completion
+    }
+
+    @objc func printOperationDidRun(
+        _ operation: NSPrintOperation, success: Bool, contextInfo: UnsafeMutableRawPointer?
+    ) {
+        completion(success)
+        if let contextInfo {
+            Unmanaged<PrintCompletion>.fromOpaque(contextInfo).release()
         }
     }
 }
